@@ -23,13 +23,17 @@ pub struct PlayerId(pub i32);
 pub struct Position(pub Vec2);
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Velocity(pub Vec2);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Radius(pub f32);
+
 pub const CONST_SPEED: f32 = 5.0;
 pub const GRID_SIZE: f32 = 10.0;
 pub const TICK: f32 = 1.0 / 60.0;
 pub const ARENA_WIDTH: f32 = 100.0;
 pub const ARENA_HEIGHT: f32 = 100.0;
 
-pub fn spawn_snake(
+pub fn spawn_snake_head(
     commands: &mut Commands,
     player: PlayerId,
     pos: Position,
@@ -37,17 +41,17 @@ pub fn spawn_snake(
     materials: &Materials,
 ) -> Entity {
     commands
-        .spawn()
+        .spawn_bundle(SpriteBundle {
+            material: materials.head_material.clone(),
+            sprite: Sprite::new(Vec2::new(GRID_SIZE, GRID_SIZE)),
+            transform: Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.1),
+            ..Default::default()
+        })
         .insert(player)
         .insert(SnakeHead)
         .insert(SnakeComponent)
         .insert(vel)
-        .insert(Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.0))
-        .insert_bundle(SpriteBundle {
-            material: materials.head_material.clone(),
-            sprite: Sprite::new(Vec2::new(GRID_SIZE, GRID_SIZE)),
-            ..Default::default()
-        })
+        .insert(Radius(GRID_SIZE / 2.0))
         .id()
 }
 pub fn spawn_snake_segment(
@@ -57,31 +61,34 @@ pub fn spawn_snake_segment(
     pos: Position,
     materials: &Materials,
 ) -> Entity {
+    let transform = Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.0);
     commands
-        .spawn()
-        .insert(SnakeComponent)
-        .insert(SnakeSegment(seg_num))
-        .insert(Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.0))
-        .insert(player)
-        .insert_bundle(SpriteBundle {
+        .spawn_bundle(SpriteBundle {
             material: materials.segment_material.clone(),
             sprite: Sprite::new(Vec2::new(GRID_SIZE, GRID_SIZE)),
+            transform,
             ..Default::default()
         })
+        .insert(SnakeComponent)
+        .insert(SnakeSegment(seg_num))
+        .insert(Radius(GRID_SIZE / 2.0))
+        .insert(player)
         .id()
 }
 
-pub fn spawn_food(commands: &mut Commands, materials: &Materials) {
+pub fn spawn_food(commands: &mut Commands, materials: &Materials) -> Entity {
     commands
         .spawn_bundle(SpriteBundle {
             material: materials.food_material.clone(),
             sprite: Sprite::new(Vec2::new(GRID_SIZE / 3.0, GRID_SIZE / 3.0)),
+            transform: Transform::from_xyz(
+                (random::<f32>() - 0.5) * ARENA_WIDTH,
+                (random::<f32>() - 0.5) * ARENA_HEIGHT,
+                0.0,
+            ),
             ..Default::default()
         })
         .insert(Food)
-        .insert(Transform::from_xyz(
-            (random::<f32>() - 0.5) * ARENA_WIDTH,
-            (random::<f32>() - 0.5) * ARENA_HEIGHT,
-            0.0,
-        ));
+        .insert(Radius(GRID_SIZE / 6.0))
+        .id()
 }
