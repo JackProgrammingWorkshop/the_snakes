@@ -21,9 +21,22 @@ pub struct PlayerId(pub i32);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Position(pub Vec2);
+impl Position {
+    pub fn random(limit_x: f32, limit_y: f32) -> Self {
+        Self(Vec2::new(
+            (random::<f32>() - 0.5) * limit_x,
+            (random::<f32>() - 0.5) * limit_y,
+        ))
+    }
+}
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Velocity(pub Vec2);
-
+impl Velocity {
+    pub fn random(abs: f32) -> Self {
+        let angle = std::f32::consts::PI * 2.0 * random::<f32>();
+        Self(Vec2::new(abs.clone() * angle.cos(), abs * angle.sin()))
+    }
+}
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Radius(pub f32);
 
@@ -75,17 +88,25 @@ pub fn spawn_snake_segment(
         .insert(player)
         .id()
 }
-
-pub fn spawn_food(commands: &mut Commands, materials: &Materials) -> Entity {
+pub fn spawn_snake_with_nodes(
+    commands: &mut Commands,
+    player: PlayerId,
+    pos: Position,
+    vel: Velocity,
+    nodes: i32,
+    materials: &Materials,
+) {
+    spawn_snake_head(commands, player, pos, vel, materials);
+    for i in 1..=nodes {
+        spawn_snake_segment(commands, i, player, pos, materials);
+    }
+}
+pub fn spawn_food(commands: &mut Commands, pos: Position, materials: &Materials) -> Entity {
     commands
         .spawn_bundle(SpriteBundle {
             material: materials.food_material.clone(),
             sprite: Sprite::new(Vec2::new(GRID_SIZE / 3.0, GRID_SIZE / 3.0)),
-            transform: Transform::from_xyz(
-                (random::<f32>() - 0.5) * ARENA_WIDTH,
-                (random::<f32>() - 0.5) * ARENA_HEIGHT,
-                0.0,
-            ),
+            transform: Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.0),
             ..Default::default()
         })
         .insert(Food)

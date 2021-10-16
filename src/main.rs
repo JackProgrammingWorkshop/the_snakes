@@ -7,8 +7,9 @@ use bevy::prelude::*;
 use bevy::utils::HashMap;
 use std::time::Duration;
 use the_snakes::{
-    spawn_food, spawn_snake_head, spawn_snake_segment, Food, Materials, PlayerId, Position, Radius,
-    SnakeHead, SnakeSegment, Velocity, CONST_SPEED, TICK,
+    spawn_food, spawn_snake_head, spawn_snake_segment, spawn_snake_with_nodes, Food, Materials,
+    PlayerId, Position, Radius, SnakeHead, SnakeSegment, Velocity, ARENA_HEIGHT, ARENA_WIDTH,
+    CONST_SPEED, TICK,
 };
 pub struct SnakeMoveTimer(pub Timer);
 impl Default for SnakeMoveTimer {
@@ -36,11 +37,20 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
 }
 
 fn setup_game(mut commands: Commands, materials: Res<Materials>) {
-    spawn_snake_head(
+    spawn_snake_with_nodes(
         &mut commands,
         PlayerId(0),
-        Position(Vec2::new(0.0, 0.0)),
-        Velocity(Vec2::Y * CONST_SPEED),
+        Position::random(ARENA_WIDTH, ARENA_HEIGHT),
+        Velocity::random(CONST_SPEED),
+        3,
+        &materials,
+    );
+    spawn_snake_with_nodes(
+        &mut commands,
+        PlayerId(1),
+        Position::random(ARENA_WIDTH, ARENA_HEIGHT),
+        Velocity::random(CONST_SPEED / 2.0),
+        3,
         &materials,
     );
 }
@@ -110,7 +120,11 @@ fn food_spawner(
     mut timer: Local<FoodSpawnTimer>,
 ) {
     if timer.0.tick(time.delta()).finished() {
-        spawn_food(&mut commands, &materials);
+        spawn_food(
+            &mut commands,
+            Position::random(ARENA_WIDTH, ARENA_HEIGHT),
+            &materials,
+        );
     }
 }
 
@@ -151,7 +165,7 @@ fn locate_food(
 ) -> Option<(Entity, Vec3)> {
     for p in foods.iter() {
         let (trans, radius1, entity): (&Transform, &Radius, Entity) = p;
-        if trans.translation.distance(pos).abs() < (radius.0.clone() + radius1.0.clone()) / 2.0 {
+        if trans.translation.distance(pos).abs() < radius.0.clone() + radius1.0.clone() {
             return Some((entity, trans.translation));
         }
     }
@@ -188,10 +202,6 @@ fn eat_food_and_extend(
             &foods,
         ) {
             commands.entity(food).despawn();
-            info!(
-                "Head position is {:?}, food position is {:?}",
-                snake.body[0].1.translation, food_pos
-            );
             spawn_snake_segment(
                 &mut commands,
                 snake.body.len() as _,
@@ -199,6 +209,62 @@ fn eat_food_and_extend(
                 Position(food_pos.xy()),
                 &materials,
             );
+        }
+    }
+}
+fn death_detection(
+    mut commands: Commands,
+    mut snake_components: Query<(
+        &Transform,
+        &PlayerId,
+        &Radius,
+        Option<&SnakeHead>,
+        Option<&SnakeSegment>,
+        Entity,
+    )>,
+    materials: Res<Materials>,
+) {
+    let mut snakes: HashMap<PlayerId, SnakeBody<(&Transform, Entity)>> = Default::default();
+    for (trans, player, radius, head, segment, entity) in snake_components.iter_mut() {
+        let snake = snakes.entry(*player).or_default();
+        if head.is_some() {
+            snake.body.push((0, (trans, entity)));
+            snake.head_radius = Some(*radius);
+        } else if let Some(seg) = segment {
+            snake.body.push((seg.0, (trans, entity)));
+        } else {
+            unreachable!()
+        }
+    }
+    for (player, snake) in &snakes {
+        for (player2, snake2) in &snakes {
+            if player == player2 {
+                continue;
+            }
+            let mut collision = false;
+            for node in &snake2.body {
+                if snake.body[0]
+                    .1
+                     .0
+                    .translation
+                    .distance(node.1 .0.translation)
+                    < snake.head_radius.unwrap().0 + snake2.head_radius.unwrap().0
+                {
+                    collision = true;
+                }
+            }
+            if collision {
+                for n in &snake.body {
+                    commands.entity(n.1 .1).despawn();
+                }
+                spawn_snake_head(
+                    &mut commands,
+                    *player,
+                    Position::random(ARENA_WIDTH, ARENA_HEIGHT),
+                    Velocity::random(CONST_SPEED),
+                    &materials,
+                );
+            }
         }
     }
 }
@@ -218,6 +284,7 @@ fn main() {
         .add_system(snake_move.system())
         .add_system(turn_from_keyboard.system())
         .add_system(eat_food_and_extend.system())
+        .add_system(death_detection.system())
         .add_plugin(LogDiagnosticsPlugin::default())
         // .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(DefaultPlugins)
