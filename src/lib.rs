@@ -65,11 +65,17 @@ pub fn spawn_snake_head(
     vel: Velocity,
     materials: &Materials,
 ) -> Entity {
+    let vel1 = vel.0.normalize();
+    let rotation = Quat::from_rotation_arc(Vec3::X, Vec3::new(vel1.x.clone(), vel1.y.clone(), 0.0));
     commands
         .spawn_bundle(SpriteBundle {
             material: materials.head_material[player.0.clone() as usize].clone(),
             sprite: Sprite::new(Vec2::new(GRID_SIZE, GRID_SIZE)),
-            transform: Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.1),
+            transform: Transform {
+                translation: Vec3::new(pos.0.x.clone(), pos.0.y.clone(), 0.1),
+                rotation,
+                ..Default::default()
+            },
             ..Default::default()
         })
         .insert(player)

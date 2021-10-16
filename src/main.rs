@@ -312,9 +312,10 @@ fn process_movement(
         };
         movements.insert(event.player_id, angle);
     }
-    for (mut vel, mut trans, player_id) in q.iter_mut() {
+    for q in q.iter_mut() {
+        let (mut vel, mut trans, player_id): (Mut<Velocity>, Mut<Transform>, &PlayerId) = q;
         if let Some(angle) = movements.get(&player_id) {
-            *vel = Velocity(rotate((vel.0.x, vel.0.y), angle.clone()));
+            *vel = Velocity(rotate((vel.0.x.clone(), vel.0.y.clone()), angle.clone()));
             trans.rotate(Quat::from_rotation_z(angle.clone()));
         }
     }
@@ -469,13 +470,14 @@ fn draw_leaderboard(
         draw_text(
             &mut commands,
             format!(
-                "{}.{}: score(s)",
+                "{}.{}: {} score(s)",
                 snake.player_id.0,
                 snake
                     .player_info
                     .as_ref()
                     .map(|x| x.username.as_str())
-                    .unwrap_or("unnamed")
+                    .unwrap_or("unnamed"),
+                snake.body.len()
             ),
             24.0,
             color,
