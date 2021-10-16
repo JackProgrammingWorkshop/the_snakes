@@ -3,6 +3,10 @@ pub mod controller;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
 use rand::random;
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+use std::fmt::Formatter;
+
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct SnakeComponent;
 
@@ -24,6 +28,11 @@ pub struct PlayerId(pub i32);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Position(pub Vec2);
+impl std::fmt::Display for Position {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("({},{})", self.0.x, self.0.y))
+    }
+}
 impl Position {
     pub fn random(limit_x: f32, limit_y: f32) -> Self {
         Self(Vec2::new(
@@ -98,11 +107,12 @@ pub fn spawn_snake_with_nodes(
     vel: Velocity,
     nodes: i32,
     materials: &Materials,
-) {
-    spawn_snake_head(commands, player, pos, vel, materials);
+) -> Entity {
+    let head = spawn_snake_head(commands, player, pos, vel, materials);
     for i in 1..=nodes {
         spawn_snake_segment(commands, i, player, pos, materials);
     }
+    head
 }
 pub fn spawn_food(commands: &mut Commands, pos: Position, materials: &Materials) -> Entity {
     commands
@@ -123,24 +133,47 @@ pub struct SnakeNode<Trans> {
     pub entity: Option<Entity>,
 }
 
+impl<Trans> PartialEq for SnakeNode<Trans> {
+    fn eq(&self, other: &Self) -> bool {
+        self.seg_id.eq(&other.seg_id)
+    }
+}
+
+impl<Trans> PartialOrd for SnakeNode<Trans> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.seg_id.partial_cmp(&other.seg_id)
+    }
+}
+
+impl<Trans> Eq for SnakeNode<Trans> {}
+
+impl<Trans> Ord for SnakeNode<Trans> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.seg_id.cmp(&other.seg_id)
+    }
+}
 pub struct SnakeBody<'a, T: 'a> {
+    pub player_id: i32,
     pub head_speed: Option<&'a Velocity>,
     pub head_radius: Option<Radius>,
-    pub body: Vec<SnakeNode<T>>,
+    pub body: BTreeSet<SnakeNode<T>>,
 }
 impl<'a, T: 'a> Default for SnakeBody<'a, T> {
     fn default() -> Self {
         Self {
+            player_id: -1,
             head_speed: None,
             head_radius: None,
-            body: vec![],
+            body: Default::default(),
         }
     }
 }
+
 pub struct FoodBody {
-    pos: Position,
+    pub pos: Position,
 }
-pub struct World<'a> {
-    foods: Vec<FoodBody>,
-    snakes: HashMap<PlayerId, SnakeBody<'a, &'a Transform>>,
+#[derive(Default)]
+pub struct SnakeWorld<'a> {
+    pub foods: Vec<FoodBody>,
+    pub snakes: HashMap<PlayerId, SnakeBody<'a, &'a Transform>>,
 }

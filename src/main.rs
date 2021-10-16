@@ -1,3 +1,5 @@
+use anyhow::Context;
+use anyhow::Result;
 use bevy::diagnostic::LogDiagnosticsPlugin;
 use bevy::input::system::exit_on_esc_system;
 #[allow(unused_imports)]
@@ -5,12 +7,15 @@ use bevy::log::*;
 use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
+use std::path::Path;
 use std::time::Duration;
+use the_snakes::controller::{Controller, MovementCommand, PlayerInfo, StdioController};
 use the_snakes::{
-    spawn_food, spawn_snake_head, spawn_snake_segment, spawn_snake_with_nodes, Food, Materials,
-    PlayerId, Position, Radius, SnakeBody, SnakeHead, SnakeNode, SnakeSegment, Velocity,
-    ARENA_HEIGHT, ARENA_WIDTH, CONST_SPEED, TICK,
+    spawn_food, spawn_snake_head, spawn_snake_segment, spawn_snake_with_nodes, Food, FoodBody,
+    Materials, PlayerId, Position, Radius, SnakeBody, SnakeHead, SnakeNode, SnakeSegment,
+    SnakeWorld, Velocity, ARENA_HEIGHT, ARENA_WIDTH, CONST_SPEED, TICK,
 };
+
 pub struct SnakeMoveTimer(pub Timer);
 impl Default for SnakeMoveTimer {
     fn default() -> Self {
@@ -35,8 +40,51 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
         segment_material: materials.add(Color::rgb(0.4, 0.4, 0.4).into()),
     });
 }
+#[derive(Default)]
+struct AiManager {
+    ais: HashMap<PlayerId, Box<dyn Controller>>,
+}
 
-fn setup_game(mut commands: Commands, materials: Res<Materials>) {
+impl AiManager {
+    fn load_all_ai<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let dir = std::fs::read_dir(path.as_ref()).with_context(|| {
+            format!(
+                "Could not read {} directory",
+                path.as_ref().to_str().unwrap()
+            )
+        })?;
+        let mut player_id = 1;
+        for f in dir {
+            let entry = f?;
+            let controller = StdioController::new(entry.path())?;
+            self.ais
+                .insert(PlayerId(player_id.clone()), Box::new(controller));
+            player_id += 1;
+        }
+        Ok(())
+    }
+    fn initialize_all_ai(&mut self, command: &mut Commands, materials: &Materials) -> Result<()> {
+        for (k, v) in self.ais.iter_mut() {
+            let info: PlayerInfo = v.initialize(*k)?;
+            assert_eq!(info.is_ai, true);
+            let head = spawn_snake_with_nodes(
+                command,
+                *k,
+                Position::random(ARENA_WIDTH, ARENA_HEIGHT),
+                Velocity::random(CONST_SPEED),
+                3,
+                materials,
+            );
+            command.entity(head).insert(info);
+        }
+        Ok(())
+    }
+}
+fn setup_game(
+    mut commands: Commands,
+    materials: Res<Materials>,
+    mut controller: ResMut<AiManager>,
+) {
     spawn_snake_with_nodes(
         &mut commands,
         PlayerId(0),
@@ -45,14 +93,18 @@ fn setup_game(mut commands: Commands, materials: Res<Materials>) {
         3,
         &materials,
     );
-    spawn_snake_with_nodes(
-        &mut commands,
-        PlayerId(1),
-        Position::random(ARENA_WIDTH, ARENA_HEIGHT),
-        Velocity::random(CONST_SPEED / 2.0),
-        3,
-        &materials,
-    );
+    match controller.load_all_ai("bin/ai") {
+        Ok(()) => {}
+        Err(err) => {
+            error!("Could not load ai: {:?}", err);
+        }
+    }
+    match controller.initialize_all_ai(&mut commands, &materials) {
+        Ok(()) => {}
+        Err(err) => {
+            error!("Could not initialize ai: {:?}", err);
+        }
+    }
 }
 
 fn snake_move(
@@ -71,14 +123,14 @@ fn snake_move(
         for (trans, player, vel, head, segment) in snake_components.iter_mut() {
             let snake = snakes.entry(*player).or_default();
             if head.is_some() {
-                snake.body.push(SnakeNode {
+                snake.body.insert(SnakeNode {
                     seg_id: 0,
                     trans,
                     entity: None,
                 });
                 snake.head_speed = Some(vel.unwrap());
             } else if let Some(seg) = segment {
-                snake.body.push(SnakeNode {
+                snake.body.insert(SnakeNode {
                     seg_id: seg.0,
                     trans,
                     entity: None,
@@ -88,21 +140,21 @@ fn snake_move(
             }
         }
 
-        for (_id, mut snake) in snakes {
+        for (_id, snake) in snakes {
             let head_vel = snake.head_speed.unwrap();
-            snake.body.sort_by_key(|x| x.seg_id);
-            for i in (1..snake.body.len()).rev() {
-                let mut trans = snake.body[i].trans.translation * 0.9
-                    + snake.body[i - 1].trans.translation * 0.1;
+            let mut body: Vec<_> = snake.body.into_iter().collect();
+            for i in (1..body.len()).rev() {
+                let mut trans =
+                    body[i].trans.translation * 0.9 + body[i - 1].trans.translation * 0.1;
                 trans.z = 0.0;
-                let mut from = snake.body[i].trans.translation;
+                let mut from = body[i].trans.translation;
                 from.z = 0.0;
                 let diff = trans - from;
-                snake.body[i].trans.translation = trans;
+                body[i].trans.translation = trans;
 
-                snake.body[i].trans.rotation = Quat::from_rotation_arc(Vec3::X, diff.normalize());
+                body[i].trans.rotation = Quat::from_rotation_arc(Vec3::X, diff.normalize());
             }
-            snake.body[0].trans.translation +=
+            body[0].trans.translation +=
                 CONST_SPEED * TICK * Vec3::new(head_vel.0.x.clone(), head_vel.0.y.clone(), 0.0);
         }
     }
@@ -130,27 +182,92 @@ fn rotate((x, y): (f32, f32), theta: f32) -> Vec2 {
         x * y2 + y * x2,
     )
 }
-fn turn_from_keyboard(
-    keys: Res<Input<KeyCode>>,
+fn process_keyboard_input(keys: Res<Input<KeyCode>>, mut event: EventWriter<MovementEvent>) {
+    if keys.pressed(KeyCode::Left) && keys.pressed(KeyCode::Right) {
+        return;
+    }
+    if keys.pressed(KeyCode::Left) {
+        event.send(MovementEvent {
+            player_id: PlayerId(0),
+            command: MovementCommand::TurnLeft,
+        });
+    } else if keys.pressed(KeyCode::Right) {
+        event.send(MovementEvent {
+            player_id: PlayerId(0),
+            command: MovementCommand::TurnRight,
+        });
+    }
+}
+struct MovementEvent {
+    player_id: PlayerId,
+    command: MovementCommand,
+}
+fn process_movement(
+    mut events: EventReader<MovementEvent>,
     mut q: Query<(&mut Velocity, &mut Transform, &PlayerId), With<SnakeHead>>,
 ) {
     const OMEGA: f32 = 2.0 * std::f32::consts::PI;
     const THETA: f32 = OMEGA * TICK;
-    if keys.pressed(KeyCode::Left) {
-        for (mut vel, mut trans, player_id) in q.iter_mut() {
-            if player_id.0 == 0 {
-                *vel = Velocity(rotate((vel.0.x, vel.0.y), THETA));
-                trans.rotate(Quat::from_rotation_z(THETA));
-            }
+    let mut movements = HashMap::default();
+    for event in events.iter() {
+        let command: &MovementCommand = &event.command;
+        let angle = match command {
+            MovementCommand::TurnLeft => THETA,
+            MovementCommand::TurnRight => -THETA,
+            MovementCommand::NoOps => 0.0,
+        };
+        movements.insert(event.player_id, angle);
+    }
+    for (mut vel, mut trans, player_id) in q.iter_mut() {
+        if let Some(angle) = movements.get(&player_id) {
+            *vel = Velocity(rotate((vel.0.x, vel.0.y), angle.clone()));
+            trans.rotate(Quat::from_rotation_z(angle.clone()));
         }
     }
-    if keys.pressed(KeyCode::Right) {
-        for (mut vel, mut trans, player_id) in q.iter_mut() {
-            if player_id.0 == 0 {
-                *vel = Velocity(rotate((vel.0.x, vel.0.y), -THETA));
-                trans.rotate(Quat::from_rotation_z(-THETA));
-            }
+}
+fn drive_all_ai(
+    mut ai_manager: ResMut<AiManager>,
+    mut snake_components: Query<(
+        &Transform,
+        &PlayerId,
+        Option<&SnakeHead>,
+        Option<&SnakeSegment>,
+    )>,
+    foods: Query<&Transform, With<Food>>,
+    mut events: EventWriter<MovementEvent>,
+) {
+    let mut world = SnakeWorld::default();
+    for trans in foods.iter() {
+        world.foods.push(FoodBody {
+            pos: Position(trans.translation.xy()),
+        })
+    }
+    for (trans, player, head, segment) in snake_components.iter_mut() {
+        let snake = world.snakes.entry(*player).or_default();
+        if head.is_some() {
+            snake.body.insert(SnakeNode {
+                seg_id: 0,
+                trans,
+                entity: None,
+            });
+        } else if let Some(seg) = segment {
+            snake.body.insert(SnakeNode {
+                seg_id: seg.0,
+                trans,
+                entity: None,
+            });
+        } else {
+            unreachable!()
         }
+    }
+
+    for (id, ai) in ai_manager.ais.iter_mut() {
+        ai.feed_input(&world).unwrap();
+        let output = ai.get_output().unwrap();
+        events.send(MovementEvent {
+            player_id: *id,
+            command: output,
+        })
     }
 }
 fn locate_food(
@@ -182,14 +299,14 @@ fn eat_food_and_extend(
     for (trans, player, radius, head, segment) in snake_components.iter_mut() {
         let snake = snakes.entry(*player).or_default();
         if head.is_some() {
-            snake.body.push(SnakeNode {
+            snake.body.insert(SnakeNode {
                 seg_id: 0,
                 trans,
                 entity: None,
             });
             snake.head_radius = Some(*radius);
         } else if let Some(seg) = segment {
-            snake.body.push(SnakeNode {
+            snake.body.insert(SnakeNode {
                 seg_id: seg.0,
                 trans,
                 entity: None,
@@ -199,11 +316,10 @@ fn eat_food_and_extend(
         }
     }
     for (player, snake) in snakes {
-        if let Some((food, food_pos)) = locate_food(
-            snake.body[0].trans.translation,
-            snake.head_radius.unwrap(),
-            &foods,
-        ) {
+        let first = snake.body.iter().next().unwrap();
+        if let Some((food, food_pos)) =
+            locate_food(first.trans.translation, snake.head_radius.unwrap(), &foods)
+        {
             commands.entity(food).despawn();
             spawn_snake_segment(
                 &mut commands,
@@ -231,14 +347,14 @@ fn death_detection(
     for (trans, player, radius, head, segment, entity) in snake_components.iter_mut() {
         let snake = snakes.entry(*player).or_default();
         if head.is_some() {
-            snake.body.push(SnakeNode {
+            snake.body.insert(SnakeNode {
                 seg_id: 0,
                 trans,
                 entity: Some(entity),
             });
             snake.head_radius = Some(*radius);
         } else if let Some(seg) = segment {
-            snake.body.push(SnakeNode {
+            snake.body.insert(SnakeNode {
                 seg_id: seg.0,
                 trans,
                 entity: Some(entity),
@@ -254,7 +370,11 @@ fn death_detection(
             }
             let mut collision = false;
             for node in &snake2.body {
-                if snake.body[0]
+                if snake
+                    .body
+                    .iter()
+                    .next()
+                    .unwrap()
                     .trans
                     .translation
                     .distance(node.trans.translation)
@@ -287,14 +407,18 @@ fn main() {
             height: 640.0,
             ..Default::default()
         })
+        .insert_resource(AiManager::default())
+        .add_event::<MovementEvent>()
         .add_startup_system(setup.system())
         .add_startup_stage("setup_game", SystemStage::single(setup_game.system()))
         .add_system(exit_on_esc_system.system())
         .add_system(food_spawner.system())
         .add_system(snake_move.system())
-        .add_system(turn_from_keyboard.system())
+        .add_system(process_keyboard_input.system())
         .add_system(eat_food_and_extend.system())
         .add_system(death_detection.system())
+        .add_system(process_movement.system())
+        .add_system(drive_all_ai.system())
         .add_plugin(LogDiagnosticsPlugin::default())
         // .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(DefaultPlugins)

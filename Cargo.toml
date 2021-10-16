@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 rand = "*"
+anyhow = "*"
 
 [dependencies.bevy]
 version = "0.5"
