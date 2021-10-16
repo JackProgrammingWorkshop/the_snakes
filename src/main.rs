@@ -34,10 +34,30 @@ impl Default for FoodSpawnTimer {
 }
 fn setup(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    let colors = vec![
+        (255, 0, 0),
+        (0, 255, 0),
+        (0, 0, 255),
+        (255, 255, 0),
+        (0, 255, 255),
+        (255, 0, 255),
+        (192, 192, 192),
+        (128, 128, 128),
+        (128, 0, 0),
+        (128, 128, 0),
+        (0, 128, 0),
+        (128, 0, 128),
+        (0, 128, 128),
+        (0, 0, 128),
+    ];
+    let colors = colors
+        .into_iter()
+        .map(|(r, g, b)| (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0))
+        .map(|(r, g, b)| materials.add(Color::rgb(r, g, b).into()));
     commands.insert_resource(Materials {
-        head_material: materials.add(Color::rgb(0.7, 0.7, 0.7).into()),
-        food_material: materials.add(Color::rgb(0.8, 0.1, 0.1).into()),
+        head_material: colors.collect(),
         segment_material: materials.add(Color::rgb(0.4, 0.4, 0.4).into()),
+        food_material: materials.add(Color::rgb(0.8, 0.1, 0.1).into()),
     });
 }
 #[derive(Default)]

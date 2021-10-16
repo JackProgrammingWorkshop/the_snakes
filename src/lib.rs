@@ -18,9 +18,9 @@ pub struct SnakeSegment(pub i32);
 pub struct Food;
 
 pub struct Materials {
-    pub head_material: Handle<ColorMaterial>,
-    pub food_material: Handle<ColorMaterial>,
+    pub head_material: Vec<Handle<ColorMaterial>>,
     pub segment_material: Handle<ColorMaterial>,
+    pub food_material: Handle<ColorMaterial>,
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
@@ -67,7 +67,7 @@ pub fn spawn_snake_head(
 ) -> Entity {
     commands
         .spawn_bundle(SpriteBundle {
-            material: materials.head_material.clone(),
+            material: materials.head_material[player.0.clone() as usize].clone(),
             sprite: Sprite::new(Vec2::new(GRID_SIZE, GRID_SIZE)),
             transform: Transform::from_xyz(pos.0.x.clone(), pos.0.y.clone(), 0.1),
             ..Default::default()
