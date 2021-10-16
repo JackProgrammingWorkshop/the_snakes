@@ -7,6 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rand = "*"
 
 [dependencies.bevy]
 version = "0.5"
@@ -19,11 +20,11 @@ features = [
     "render",
     "bevy_wgpu",
     "bevy_winit",
-    "bevy_gilrs",
-    "bevy_gltf",
+#    "bevy_gilrs",
+#    "bevy_gltf",
 #    "bevy_audio",
     "png",
-    "hdr",
+#    "hdr",
 #    "mp3",
     "x11",
     # These are other features that may be of interest:
