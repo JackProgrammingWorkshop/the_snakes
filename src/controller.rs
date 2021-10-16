@@ -12,7 +12,7 @@ pub enum MovementCommand {
     TurnLeft,
     TurnRight,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PlayerInfo {
     pub username: String,
     pub is_ai: bool,
@@ -106,8 +106,8 @@ impl Controller for StdioController {
     fn feed_input(&mut self, world: &SnakeWorld) -> Result<()> {
         self.stdin.write(b"MAP BEGIN\n")?;
         for snake in world.snakes.values() {
-            write!(self.stdin, "snake {}", snake.player_id)?;
-            for node in &snake.body {
+            write!(self.stdin, "snake {}", snake.player_id.0)?;
+            for node in snake.body.values() {
                 write!(self.stdin, " {}", Position(node.trans.translation.xy()))?;
             }
             writeln!(self.stdin, "")?;

@@ -1,19 +1,21 @@
 use anyhow::Context;
 use anyhow::Result;
 use bevy::diagnostic::LogDiagnosticsPlugin;
+use bevy::ecs::system::EntityCommands;
 use bevy::input::system::exit_on_esc_system;
 #[allow(unused_imports)]
 use bevy::log::*;
 use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use bevy::utils::HashMap;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 use the_snakes::controller::{Controller, MovementCommand, PlayerInfo, StdioController};
 use the_snakes::{
-    spawn_food, spawn_snake_head, spawn_snake_segment, spawn_snake_with_nodes, Food, FoodBody,
-    Materials, PlayerId, Position, Radius, SnakeBody, SnakeHead, SnakeNode, SnakeSegment,
-    SnakeWorld, Velocity, ARENA_HEIGHT, ARENA_WIDTH, CONST_SPEED, TICK,
+    spawn_food, spawn_snake_segment, spawn_snake_with_nodes, Food, FoodBody, Materials, PlayerId,
+    Position, Radius, SnakeBody, SnakeHead, SnakeNode, SnakeSegment, SnakeWorld, Velocity,
+    ARENA_HEIGHT, ARENA_WIDTH, CONST_SPEED, TICK,
 };
 
 pub struct SnakeMoveTimer(pub Timer);
@@ -50,12 +52,17 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
         (0, 128, 128),
         (0, 0, 128),
     ];
-    let colors = colors
+    let colors: Vec<Color> = colors
         .into_iter()
         .map(|(r, g, b)| (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0))
-        .map(|(r, g, b)| materials.add(Color::rgb(r, g, b).into()));
+        .map(|(r, g, b)| Color::rgb(r, g, b))
+        .collect();
     commands.insert_resource(Materials {
-        head_material: colors.collect(),
+        colors: colors.clone(),
+        head_material: colors
+            .into_iter()
+            .map(|x| materials.add(x.into()))
+            .collect(),
         segment_material: materials.add(Color::rgb(0.4, 0.4, 0.4).into()),
         food_material: materials.add(Color::rgb(0.8, 0.1, 0.1).into()),
     });
@@ -83,11 +90,16 @@ impl AiManager {
         }
         Ok(())
     }
-    fn initialize_all_ai(&mut self, command: &mut Commands, materials: &Materials) -> Result<()> {
+    fn initialize_all_ai(
+        &mut self,
+        command: &mut Commands,
+        materials: &Materials,
+        registry: &mut PlayerInfoRegistry,
+    ) -> Result<()> {
         for (k, v) in self.ais.iter_mut() {
             let info: PlayerInfo = v.initialize(*k)?;
             assert_eq!(info.is_ai, true);
-            let head = spawn_snake_with_nodes(
+            spawn_snake_with_nodes(
                 command,
                 *k,
                 Position::random(ARENA_WIDTH, ARENA_HEIGHT),
@@ -95,15 +107,20 @@ impl AiManager {
                 3,
                 materials,
             );
-            command.entity(head).insert(info);
+            registry.player_infos.insert(*k, info);
         }
         Ok(())
     }
+}
+#[derive(Default)]
+struct PlayerInfoRegistry {
+    pub player_infos: BTreeMap<PlayerId, PlayerInfo>,
 }
 fn setup_game(
     mut commands: Commands,
     materials: Res<Materials>,
     mut controller: ResMut<AiManager>,
+    mut registry: ResMut<PlayerInfoRegistry>,
 ) {
     spawn_snake_with_nodes(
         &mut commands,
@@ -113,20 +130,71 @@ fn setup_game(
         3,
         &materials,
     );
+    registry.player_infos.insert(
+        PlayerId(0),
+        PlayerInfo {
+            username: "player".to_string(),
+            is_ai: false,
+        },
+    );
     match controller.load_all_ai("bin/ai") {
         Ok(()) => {}
         Err(err) => {
             error!("Could not load ai: {:?}", err);
         }
     }
-    match controller.initialize_all_ai(&mut commands, &materials) {
+    match controller.initialize_all_ai(&mut commands, &materials, &mut registry) {
         Ok(()) => {}
         Err(err) => {
             error!("Could not initialize ai: {:?}", err);
         }
     }
 }
-
+type CollectSnakeQuery<'a, 'b> = Query<
+    'a,
+    (
+        &'b Transform,
+        &'b PlayerId,
+        Entity,
+        Option<&'b Radius>,
+        Option<&'b SnakeHead>,
+        Option<&'b SnakeSegment>,
+    ),
+>;
+fn collect_snakes<'a>(
+    snake_components: &'a CollectSnakeQuery,
+    registry: &PlayerInfoRegistry,
+) -> BTreeMap<PlayerId, SnakeBody<&'a Transform>> {
+    let mut world = SnakeWorld::default();
+    for (trans, player, entity, radius, head, segment) in snake_components.iter() {
+        let snake = world.snakes.entry(*player).or_default();
+        snake.player_id = *player;
+        if head.is_some() {
+            snake.body.insert(
+                0,
+                SnakeNode {
+                    seg_id: 0,
+                    trans,
+                    entity: Some(entity),
+                },
+            );
+            snake.head_radius = radius.map(|x| *x);
+            snake.player_info = registry.player_infos.get(player).map(|x| x.clone());
+        } else if let Some(seg) = segment {
+            snake.body.insert(
+                seg.0,
+                SnakeNode {
+                    seg_id: seg.0,
+                    trans,
+                    entity: Some(entity),
+                },
+            );
+        } else {
+            unreachable!()
+        }
+    }
+    world.snakes
+}
 fn snake_move(
     mut snake_components: Query<(
         &mut Transform,
@@ -143,26 +211,32 @@ fn snake_move(
         for (trans, player, vel, head, segment) in snake_components.iter_mut() {
             let snake = snakes.entry(*player).or_default();
             if head.is_some() {
-                snake.body.insert(SnakeNode {
-                    seg_id: 0,
-                    trans,
-                    entity: None,
-                });
-                snake.head_speed = Some(vel.unwrap());
+                snake.body.insert(
+                    0,
+                    SnakeNode {
+                        seg_id: 0,
+                        trans,
+                        entity: None,
+                    },
+                );
+                snake.head_speed = Some(vel.cloned().unwrap());
             } else if let Some(seg) = segment {
-                snake.body.insert(SnakeNode {
-                    seg_id: seg.0,
-                    trans,
-                    entity: None,
-                });
+                snake.body.insert(
+                    seg.0,
+                    SnakeNode {
+                        seg_id: seg.0,
+                        trans,
+                        entity: None,
+                    },
+                );
             } else {
                 unreachable!()
             }
         }
 
-        for (_id, snake) in snakes {
+        for snake in snakes.values_mut() {
             let head_vel = snake.head_speed.unwrap();
-            let mut body: Vec<_> = snake.body.into_iter().collect();
+            let mut body: Vec<_> = snake.body.values_mut().collect();
             for i in (1..body.len()).rev() {
                 let mut trans =
                     body[i].trans.translation * 0.9 + body[i - 1].trans.translation * 0.1;
@@ -247,14 +321,10 @@ fn process_movement(
 }
 fn drive_all_ai(
     mut ai_manager: ResMut<AiManager>,
-    mut snake_components: Query<(
-        &Transform,
-        &PlayerId,
-        Option<&SnakeHead>,
-        Option<&SnakeSegment>,
-    )>,
+    snake_components: CollectSnakeQuery,
     foods: Query<&Transform, With<Food>>,
     mut events: EventWriter<MovementEvent>,
+    registry: Res<PlayerInfoRegistry>,
 ) {
     let mut world = SnakeWorld::default();
     for trans in foods.iter() {
@@ -262,24 +332,7 @@ fn drive_all_ai(
             pos: Position(trans.translation.xy()),
         })
     }
-    for (trans, player, head, segment) in snake_components.iter_mut() {
-        let snake = world.snakes.entry(*player).or_default();
-        if head.is_some() {
-            snake.body.insert(SnakeNode {
-                seg_id: 0,
-                trans,
-                entity: None,
-            });
-        } else if let Some(seg) = segment {
-            snake.body.insert(SnakeNode {
-                seg_id: seg.0,
-                trans,
-                entity: None,
-            });
-        } else {
-            unreachable!()
-        }
-    }
+    world.snakes = collect_snakes(&snake_components, &registry);
 
     for (id, ai) in ai_manager.ais.iter_mut() {
         ai.feed_input(&world).unwrap();
@@ -305,38 +358,14 @@ fn locate_food(
 }
 fn eat_food_and_extend(
     mut commands: Commands,
-    mut snake_components: Query<(
-        &Transform,
-        &PlayerId,
-        &Radius,
-        Option<&SnakeHead>,
-        Option<&SnakeSegment>,
-    )>,
+    snake_components: CollectSnakeQuery,
     foods: Query<(&Transform, &Radius, Entity), With<Food>>,
     materials: Res<Materials>,
+    registry: Res<PlayerInfoRegistry>,
 ) {
-    let mut snakes: HashMap<PlayerId, SnakeBody<&Transform>> = Default::default();
-    for (trans, player, radius, head, segment) in snake_components.iter_mut() {
-        let snake = snakes.entry(*player).or_default();
-        if head.is_some() {
-            snake.body.insert(SnakeNode {
-                seg_id: 0,
-                trans,
-                entity: None,
-            });
-            snake.head_radius = Some(*radius);
-        } else if let Some(seg) = segment {
-            snake.body.insert(SnakeNode {
-                seg_id: seg.0,
-                trans,
-                entity: None,
-            });
-        } else {
-            unreachable!()
-        }
-    }
+    let snakes = collect_snakes(&snake_components, &registry);
     for (player, snake) in snakes {
-        let first = snake.body.iter().next().unwrap();
+        let first = snake.body.values().next().unwrap();
         if let Some((food, food_pos)) =
             locate_food(first.trans.translation, snake.head_radius.unwrap(), &foods)
         {
@@ -353,46 +382,21 @@ fn eat_food_and_extend(
 }
 fn death_detection(
     mut commands: Commands,
-    mut snake_components: Query<(
-        &Transform,
-        &PlayerId,
-        &Radius,
-        Option<&SnakeHead>,
-        Option<&SnakeSegment>,
-        Entity,
-    )>,
+    snake_components: CollectSnakeQuery,
     materials: Res<Materials>,
+    registry: Res<PlayerInfoRegistry>,
 ) {
-    let mut snakes: HashMap<PlayerId, SnakeBody<&Transform>> = Default::default();
-    for (trans, player, radius, head, segment, entity) in snake_components.iter_mut() {
-        let snake = snakes.entry(*player).or_default();
-        if head.is_some() {
-            snake.body.insert(SnakeNode {
-                seg_id: 0,
-                trans,
-                entity: Some(entity),
-            });
-            snake.head_radius = Some(*radius);
-        } else if let Some(seg) = segment {
-            snake.body.insert(SnakeNode {
-                seg_id: seg.0,
-                trans,
-                entity: Some(entity),
-            });
-        } else {
-            unreachable!()
-        }
-    }
+    let snakes = collect_snakes(&snake_components, &registry);
     for (player, snake) in &snakes {
         for (player2, snake2) in &snakes {
             if player == player2 {
                 continue;
             }
             let mut collision = false;
-            for node in &snake2.body {
+            for node in snake2.body.values() {
                 if snake
                     .body
-                    .iter()
+                    .values()
                     .next()
                     .unwrap()
                     .trans
@@ -404,18 +408,82 @@ fn death_detection(
                 }
             }
             if collision {
-                for n in &snake.body {
+                for n in snake.body.values() {
                     commands.entity(n.entity.unwrap()).despawn();
                 }
-                spawn_snake_head(
+                spawn_snake_with_nodes(
                     &mut commands,
                     *player,
                     Position::random(ARENA_WIDTH, ARENA_HEIGHT),
                     Velocity::random(CONST_SPEED),
+                    3,
                     &materials,
                 );
             }
         }
+    }
+}
+struct LeaderBoard;
+
+fn draw_text<'a, 'b>(
+    commands: &'b mut Commands<'a>,
+    text: impl Into<String>,
+    font_size: f32,
+    color: Color,
+    pos: Vec2,
+    font: Handle<Font>,
+) -> EntityCommands<'a, 'b> {
+    commands.spawn_bundle(Text2dBundle {
+        text: Text::with_section(
+            text,
+            TextStyle {
+                font,
+                font_size,
+                color,
+            },
+            TextAlignment {
+                vertical: VerticalAlign::Center,
+                horizontal: HorizontalAlign::Left,
+            },
+        ),
+        transform: Transform::from_xyz(pos.x.clone(), pos.y.clone(), 100.0),
+        ..Default::default()
+    })
+}
+fn draw_leaderboard(
+    mut commands: Commands,
+    last: Query<Entity, With<LeaderBoard>>,
+    asset_server: Res<AssetServer>,
+    snakes: CollectSnakeQuery,
+    materials: Res<Materials>,
+    registry: Res<PlayerInfoRegistry>,
+) {
+    last.for_each(|x| commands.entity(x).despawn());
+    let font: Handle<Font> = asset_server.load("fonts/Arial.ttf");
+    let snakes = collect_snakes(&snakes, &registry);
+    let pos_x = 300.0;
+    let mut pos_y = 0.0;
+    for snake in snakes.values() {
+        let color = materials.colors[snake.player_id.0.clone() as usize];
+        // | player_name | 0 score(s) |
+        draw_text(
+            &mut commands,
+            format!(
+                "{}.{}: score(s)",
+                snake.player_id.0,
+                snake
+                    .player_info
+                    .as_ref()
+                    .map(|x| x.username.as_str())
+                    .unwrap_or("unnamed")
+            ),
+            24.0,
+            color,
+            Vec2::new(pos_x.clone(), pos_y.clone()),
+            font.clone(),
+        )
+        .insert(LeaderBoard);
+        pos_y -= 20.0;
     }
 }
 fn main() {
@@ -428,6 +496,7 @@ fn main() {
             ..Default::default()
         })
         .insert_resource(AiManager::default())
+        .insert_resource(PlayerInfoRegistry::default())
         .add_event::<MovementEvent>()
         .add_startup_system(setup.system())
         .add_startup_stage("setup_game", SystemStage::single(setup_game.system()))
@@ -439,6 +508,7 @@ fn main() {
         .add_system(death_detection.system())
         .add_system(process_movement.system())
         .add_system(drive_all_ai.system())
+        .add_system(draw_leaderboard.system())
         .add_plugin(LogDiagnosticsPlugin::default())
         // .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(DefaultPlugins)

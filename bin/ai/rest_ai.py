@@ -48,7 +48,11 @@ if __name__ == '__main__':
     snakes = []
     foods = []
     while True:
-        command = read_line()
+        try:
+            command = read_line()
+        except EOFError:
+            logging.info("program shutdowns")
+            break
         if command == "INIT BEGIN":
             initializing = True
         elif command == "INIT END":

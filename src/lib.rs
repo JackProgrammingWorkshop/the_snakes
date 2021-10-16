@@ -1,10 +1,9 @@
 pub mod controller;
 
+use crate::controller::PlayerInfo;
 use bevy::prelude::*;
-use bevy::utils::HashMap;
 use rand::random;
-use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::Formatter;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -18,6 +17,7 @@ pub struct SnakeSegment(pub i32);
 pub struct Food;
 
 pub struct Materials {
+    pub colors: Vec<Color>,
     pub head_material: Vec<Handle<ColorMaterial>>,
     pub segment_material: Handle<ColorMaterial>,
     pub food_material: Handle<ColorMaterial>,
@@ -133,35 +133,18 @@ pub struct SnakeNode<Trans> {
     pub entity: Option<Entity>,
 }
 
-impl<Trans> PartialEq for SnakeNode<Trans> {
-    fn eq(&self, other: &Self) -> bool {
-        self.seg_id.eq(&other.seg_id)
-    }
-}
-
-impl<Trans> PartialOrd for SnakeNode<Trans> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.seg_id.partial_cmp(&other.seg_id)
-    }
-}
-
-impl<Trans> Eq for SnakeNode<Trans> {}
-
-impl<Trans> Ord for SnakeNode<Trans> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.seg_id.cmp(&other.seg_id)
-    }
-}
-pub struct SnakeBody<'a, T: 'a> {
-    pub player_id: i32,
-    pub head_speed: Option<&'a Velocity>,
+pub struct SnakeBody<T> {
+    pub player_id: PlayerId,
+    pub player_info: Option<PlayerInfo>,
+    pub head_speed: Option<Velocity>,
     pub head_radius: Option<Radius>,
-    pub body: BTreeSet<SnakeNode<T>>,
+    pub body: BTreeMap<i32, SnakeNode<T>>,
 }
-impl<'a, T: 'a> Default for SnakeBody<'a, T> {
+impl<T> Default for SnakeBody<T> {
     fn default() -> Self {
         Self {
-            player_id: -1,
+            player_id: PlayerId(-1),
+            player_info: None,
             head_speed: None,
             head_radius: None,
             body: Default::default(),
@@ -175,5 +158,5 @@ pub struct FoodBody {
 #[derive(Default)]
 pub struct SnakeWorld<'a> {
     pub foods: Vec<FoodBody>,
-    pub snakes: HashMap<PlayerId, SnakeBody<'a, &'a Transform>>,
+    pub snakes: BTreeMap<PlayerId, SnakeBody<&'a Transform>>,
 }
