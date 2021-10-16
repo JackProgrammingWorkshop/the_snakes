@@ -1,4 +1,7 @@
+pub mod controller;
+
 use bevy::prelude::*;
+use bevy::utils::HashMap;
 use rand::random;
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct SnakeComponent;
@@ -112,4 +115,32 @@ pub fn spawn_food(commands: &mut Commands, pos: Position, materials: &Materials)
         .insert(Food)
         .insert(Radius(GRID_SIZE / 6.0))
         .id()
+}
+#[derive(Default)]
+pub struct SnakeNode<Trans> {
+    pub seg_id: i32,
+    pub trans: Trans,
+    pub entity: Option<Entity>,
+}
+
+pub struct SnakeBody<'a, T: 'a> {
+    pub head_speed: Option<&'a Velocity>,
+    pub head_radius: Option<Radius>,
+    pub body: Vec<SnakeNode<T>>,
+}
+impl<'a, T: 'a> Default for SnakeBody<'a, T> {
+    fn default() -> Self {
+        Self {
+            head_speed: None,
+            head_radius: None,
+            body: vec![],
+        }
+    }
+}
+pub struct FoodBody {
+    pos: Position,
+}
+pub struct World<'a> {
+    foods: Vec<FoodBody>,
+    snakes: HashMap<PlayerId, SnakeBody<'a, &'a Transform>>,
 }

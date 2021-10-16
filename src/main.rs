@@ -8,8 +8,8 @@ use bevy::utils::HashMap;
 use std::time::Duration;
 use the_snakes::{
     spawn_food, spawn_snake_head, spawn_snake_segment, spawn_snake_with_nodes, Food, Materials,
-    PlayerId, Position, Radius, SnakeHead, SnakeSegment, Velocity, ARENA_HEIGHT, ARENA_WIDTH,
-    CONST_SPEED, TICK,
+    PlayerId, Position, Radius, SnakeBody, SnakeHead, SnakeNode, SnakeSegment, Velocity,
+    ARENA_HEIGHT, ARENA_WIDTH, CONST_SPEED, TICK,
 };
 pub struct SnakeMoveTimer(pub Timer);
 impl Default for SnakeMoveTimer {
@@ -54,20 +54,7 @@ fn setup_game(mut commands: Commands, materials: Res<Materials>) {
         &materials,
     );
 }
-struct SnakeBody<'a, T: 'a> {
-    head_speed: Option<&'a Velocity>,
-    head_radius: Option<Radius>,
-    body: Vec<(i32, T)>,
-}
-impl<'a, T: 'a> Default for SnakeBody<'a, T> {
-    fn default() -> Self {
-        Self {
-            head_speed: None,
-            head_radius: None,
-            body: vec![],
-        }
-    }
-}
+
 fn snake_move(
     mut snake_components: Query<(
         &mut Transform,
@@ -84,10 +71,18 @@ fn snake_move(
         for (trans, player, vel, head, segment) in snake_components.iter_mut() {
             let snake = snakes.entry(*player).or_default();
             if head.is_some() {
-                snake.body.push((0, trans));
+                snake.body.push(SnakeNode {
+                    seg_id: 0,
+                    trans,
+                    entity: None,
+                });
                 snake.head_speed = Some(vel.unwrap());
             } else if let Some(seg) = segment {
-                snake.body.push((seg.0, trans));
+                snake.body.push(SnakeNode {
+                    seg_id: seg.0,
+                    trans,
+                    entity: None,
+                });
             } else {
                 unreachable!()
             }
@@ -95,19 +90,19 @@ fn snake_move(
 
         for (_id, mut snake) in snakes {
             let head_vel = snake.head_speed.unwrap();
-            snake.body.sort_by_key(|x| x.0);
+            snake.body.sort_by_key(|x| x.seg_id);
             for i in (1..snake.body.len()).rev() {
-                let mut trans =
-                    snake.body[i].1.translation * 0.9 + snake.body[i - 1].1.translation * 0.1;
+                let mut trans = snake.body[i].trans.translation * 0.9
+                    + snake.body[i - 1].trans.translation * 0.1;
                 trans.z = 0.0;
-                let mut from = snake.body[i].1.translation;
+                let mut from = snake.body[i].trans.translation;
                 from.z = 0.0;
                 let diff = trans - from;
-                snake.body[i].1.translation = trans;
+                snake.body[i].trans.translation = trans;
 
-                snake.body[i].1.rotation = Quat::from_rotation_arc(Vec3::X, diff.normalize());
+                snake.body[i].trans.rotation = Quat::from_rotation_arc(Vec3::X, diff.normalize());
             }
-            snake.body[0].1.translation +=
+            snake.body[0].trans.translation +=
                 CONST_SPEED * TICK * Vec3::new(head_vel.0.x.clone(), head_vel.0.y.clone(), 0.0);
         }
     }
@@ -187,17 +182,25 @@ fn eat_food_and_extend(
     for (trans, player, radius, head, segment) in snake_components.iter_mut() {
         let snake = snakes.entry(*player).or_default();
         if head.is_some() {
-            snake.body.push((0, trans));
+            snake.body.push(SnakeNode {
+                seg_id: 0,
+                trans,
+                entity: None,
+            });
             snake.head_radius = Some(*radius);
         } else if let Some(seg) = segment {
-            snake.body.push((seg.0, trans));
+            snake.body.push(SnakeNode {
+                seg_id: seg.0,
+                trans,
+                entity: None,
+            });
         } else {
             unreachable!()
         }
     }
     for (player, snake) in snakes {
         if let Some((food, food_pos)) = locate_food(
-            snake.body[0].1.translation,
+            snake.body[0].trans.translation,
             snake.head_radius.unwrap(),
             &foods,
         ) {
@@ -224,14 +227,22 @@ fn death_detection(
     )>,
     materials: Res<Materials>,
 ) {
-    let mut snakes: HashMap<PlayerId, SnakeBody<(&Transform, Entity)>> = Default::default();
+    let mut snakes: HashMap<PlayerId, SnakeBody<&Transform>> = Default::default();
     for (trans, player, radius, head, segment, entity) in snake_components.iter_mut() {
         let snake = snakes.entry(*player).or_default();
         if head.is_some() {
-            snake.body.push((0, (trans, entity)));
+            snake.body.push(SnakeNode {
+                seg_id: 0,
+                trans,
+                entity: Some(entity),
+            });
             snake.head_radius = Some(*radius);
         } else if let Some(seg) = segment {
-            snake.body.push((seg.0, (trans, entity)));
+            snake.body.push(SnakeNode {
+                seg_id: seg.0,
+                trans,
+                entity: Some(entity),
+            });
         } else {
             unreachable!()
         }
@@ -244,10 +255,9 @@ fn death_detection(
             let mut collision = false;
             for node in &snake2.body {
                 if snake.body[0]
-                    .1
-                     .0
+                    .trans
                     .translation
-                    .distance(node.1 .0.translation)
+                    .distance(node.trans.translation)
                     < snake.head_radius.unwrap().0 + snake2.head_radius.unwrap().0
                 {
                     collision = true;
@@ -255,7 +265,7 @@ fn death_detection(
             }
             if collision {
                 for n in &snake.body {
-                    commands.entity(n.1 .1).despawn();
+                    commands.entity(n.entity.unwrap()).despawn();
                 }
                 spawn_snake_head(
                     &mut commands,
