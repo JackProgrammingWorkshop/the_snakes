@@ -239,7 +239,7 @@ fn snake_move(
             let mut body: Vec<_> = snake.body.values_mut().collect();
             for i in (1..body.len()).rev() {
                 let mut trans =
-                    body[i].trans.translation * 0.9 + body[i - 1].trans.translation * 0.1;
+                    body[i].trans.translation * 0.95 + body[i - 1].trans.translation * 0.05;
                 trans.z = 0.0;
                 let mut from = body[i].trans.translation;
                 from.z = 0.0;
@@ -488,6 +488,7 @@ fn draw_leaderboard(
         pos_y -= 20.0;
     }
 }
+// Entity Component System
 fn main() {
     App::build()
         .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
@@ -504,12 +505,12 @@ fn main() {
         .add_startup_stage("setup_game", SystemStage::single(setup_game.system()))
         .add_system(exit_on_esc_system.system())
         .add_system(food_spawner.system())
-        .add_system(snake_move.system())
         .add_system(process_keyboard_input.system())
         .add_system(eat_food_and_extend.system())
         .add_system(death_detection.system())
-        .add_system(process_movement.system())
         .add_system(drive_all_ai.system())
+        .add_system(process_movement.system())
+        .add_system(snake_move.system())
         .add_system(draw_leaderboard.system())
         .add_plugin(LogDiagnosticsPlugin::default())
         // .add_plugin(FrameTimeDiagnosticsPlugin::default())

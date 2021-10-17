@@ -30,13 +30,24 @@ pub struct StdioController {
     stdout: BufReader<ChildStdout>,
     // stderr: ChildStderr,
 }
+fn try_open_file(file: impl AsRef<OsStr>) -> std::io::Result<Child> {
+    let file = file.as_ref().to_str().unwrap();
+    let args;
+    if file.ends_with(".py") {
+        args = vec!["python3", file];
+    } else {
+        args = vec![file.as_ref()];
+    }
+    Command::new(&args[0])
+        .args(&args[1..])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+}
 impl StdioController {
     pub fn new(file: impl AsRef<OsStr>) -> Result<Self> {
         info!("Loading AI {}", file.as_ref().to_str().unwrap());
-        let mut child = Command::new(file.as_ref())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
+        let mut child = try_open_file(file.as_ref())?;
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         // let stderr = child.stderr.take().unwrap();
@@ -75,7 +86,6 @@ impl StdioController {
         Ok(info)
     }
     pub fn parse_action(&mut self) -> anyhow::Result<MovementCommand> {
-        writeln!(self.stdin, "REQUEST_ACTION")?;
         let mut line = String::new();
         self.stdout.read_line(&mut line)?;
         let mut spt = line.split(" ");
