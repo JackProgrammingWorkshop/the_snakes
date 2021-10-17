@@ -44,6 +44,7 @@ fn try_open_file(file: impl AsRef<OsStr>) -> std::io::Result<Child> {
         .stdout(Stdio::piped())
         .spawn()
 }
+
 impl StdioController {
     pub fn new(file: impl AsRef<OsStr>) -> Result<Self> {
         info!("Loading AI {}", file.as_ref().to_str().unwrap());
@@ -70,11 +71,7 @@ impl StdioController {
             is_ai: true,
         };
         if spt.next() == Some("username") {
-            let username = spt
-                .next()
-                .map(|x| x.strip_suffix("\n"))
-                .flatten()
-                .context("Could not find username")?;
+            let username = spt.next().context("Could not find username")?.trim();
             info.username = username.to_owned();
         } else {
             anyhow::bail!("You must begin with username");
@@ -89,7 +86,7 @@ impl StdioController {
         let mut line = String::new();
         self.stdout.read_line(&mut line)?;
         let mut spt = line.split(" ");
-        let cmd = spt.next().map(|x| x.strip_suffix("\n")).flatten();
+        let cmd = spt.next().map(|x| x.trim());
         match cmd {
             Some("turn_left") => Ok(MovementCommand::TurnLeft),
             Some("turn_right") => Ok(MovementCommand::TurnRight),
@@ -107,14 +104,14 @@ impl StdioController {
 impl Controller for StdioController {
     fn initialize(&mut self, player_id: PlayerId) -> Result<PlayerInfo> {
         info!("Initializing AI {}", self.name);
-        self.stdin.write(b"INIT BEGIN\n")?;
+        writeln!(self.stdin, "INIT BEGIN")?;
         writeln!(self.stdin, "player_id {}", player_id.0)?;
-        self.stdin.write(b"INIT END\n")?;
+        writeln!(self.stdin, "INIT END")?;
         self.parse_info()
     }
 
     fn feed_input(&mut self, world: &SnakeWorld) -> Result<()> {
-        self.stdin.write(b"MAP BEGIN\n")?;
+        writeln!(self.stdin, "MAP BEGIN")?;
         for snake in world.snakes.values() {
             write!(self.stdin, "snake {}", snake.player_id.0)?;
             for node in snake.body.values() {
@@ -125,7 +122,7 @@ impl Controller for StdioController {
         for food in &world.foods {
             writeln!(self.stdin, "food {}", food.pos)?;
         }
-        self.stdin.write(b"MAP END\n")?;
+        writeln!(self.stdin, "MAP END")?;
         Ok(())
     }
 
