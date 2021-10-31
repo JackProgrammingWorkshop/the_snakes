@@ -137,7 +137,7 @@ fn setup_game(
             is_ai: false,
         },
     );
-    match controller.load_all_ai("bin/ai") {
+    match controller.load_all_ai("bin/activated") {
         Ok(()) => {}
         Err(err) => {
             error!("Could not load ai: {:?}", err);

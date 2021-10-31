@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use bevy::log::*;
 use bevy::math::Vec3Swizzles;
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 #[derive(Debug, Copy, Clone)]
@@ -27,9 +27,16 @@ pub struct StdioController {
     name: String,
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    // stderr: ChildStderr,
+    stdout: ChildStdout,
+    // read_buf: Vec<u8>
 }
+macro_rules! writeln {
+    ($dst:expr, $($arg:tt)*) => {{
+        // info!("writing {:?}", format!($($arg) *));
+        std::writeln!($dst, $($arg)*)
+    }};
+}
+
 fn try_open_file(file: impl AsRef<OsStr>) -> std::io::Result<Child> {
     let file = file.as_ref().to_str().unwrap();
     let args;
@@ -38,11 +45,14 @@ fn try_open_file(file: impl AsRef<OsStr>) -> std::io::Result<Child> {
     } else {
         args = vec![file.as_ref()];
     }
-    Command::new(&args[0])
+    let process = Command::new(&args[0])
         .args(&args[1..])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
+        // .stderr(Stdio::piped())
+        .spawn()?;
+    info!("Spawned process {}", process.id());
+    Ok(process)
 }
 
 impl StdioController {
@@ -51,20 +61,38 @@ impl StdioController {
         let mut child = try_open_file(file.as_ref())?;
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
-        // let stderr = child.stderr.take().unwrap();
+        // let mut stderr = child.stderr.take().unwrap();
+        // std::thread::spawn(move || loop {
+        //     let mut buf = [0u8; 128];
+        //     let len = stderr.read(&mut buf).unwrap();
+        //     if len == 0 {
+        //         break;
+        //     }
+        //     info!(
+        //         "Read from stderr {}",
+        //         std::str::from_utf8(&buf[..len]).unwrap()
+        //     );
+        // });
         Ok(Self {
             name: file.as_ref().to_str().unwrap().to_owned(),
             child,
             stdin,
-            stdout: BufReader::new(stdout),
-            // stderr,
+            stdout,
+            // read_buf: vec![]
         })
+    }
+    fn read_line(&mut self) -> anyhow::Result<String> {
+        let mut chunk = [0u8; 1000];
+        let len = self.stdout.read(&mut chunk)?;
+        let line = String::from_utf8(chunk[..len].to_owned()).unwrap();
+        if line.is_empty() {
+            anyhow::bail!("Program exited");
+        }
+        Ok(line)
     }
     pub fn parse_info(&mut self) -> anyhow::Result<PlayerInfo> {
         info!("Parsing player info for AI {}", self.name);
-
-        let mut line = String::new();
-        self.stdout.read_line(&mut line)?;
+        let line = self.read_line()?;
         let mut spt = line.split(" ");
         let mut info = PlayerInfo {
             username: "".to_string(),
@@ -83,8 +111,7 @@ impl StdioController {
         Ok(info)
     }
     pub fn parse_action(&mut self) -> anyhow::Result<MovementCommand> {
-        let mut line = String::new();
-        self.stdout.read_line(&mut line)?;
+        let line = self.read_line()?;
         let mut spt = line.split(" ");
         let cmd = spt.next().map(|x| x.trim());
         match cmd {
@@ -107,6 +134,7 @@ impl Controller for StdioController {
         writeln!(self.stdin, "INIT BEGIN")?;
         writeln!(self.stdin, "player_id {}", player_id.0)?;
         writeln!(self.stdin, "INIT END")?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
         self.parse_info()
     }
 

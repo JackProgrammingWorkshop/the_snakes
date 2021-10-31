@@ -123,7 +123,7 @@ def main():
         elif command.startswith("food"):
             pos = command.split()[1]
             foods.append(parse_pos(pos))
-        elif command.startswith("REQUEST_ACTION"):
+        elif command == "REQUEST_ACTION":
             print_line(get_command())
             # more action
         else:

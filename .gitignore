@@ -16,3 +16,8 @@ Cargo.lock
 
 .idea/
 .vscode
+
+CMakeLists.txt
+bin/activated/c_ai
+
+cmake-build-*
